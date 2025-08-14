@@ -21,51 +21,56 @@ import umap
 from transformers import pipeline, set_seed
 
 
-def load_dataset(tokenizer):
-    with open("./gp_same_len.csv", "r") as f:
-        raw_data = [l.strip().split(",") for i, l in enumerate(f.readlines()) if i > 0]
+def load_dataset(dataset_name, tokenizer):
+    if dataset_name == 'gp_same_len.csv':
+        with open(f"./{dataset_name}", "r") as f:
+            raw_data = [l.strip().split(",") for i, l in enumerate(f.readlines()) if i > 0]
+    else:
+        df = pd.read_csv(f"./{dataset_name}", sep = ';', header = 'infer', skip_blank_lines=True)
+        df.columns = ['ind', 'condition', 'sentence_ambiguous', 'sentence_gp', 'sentence_non_gp']
+        raw_data = df.values.tolist()
 
-        data = []
-        amb = []
-        gp = []
-        non_gp = []
+    data = []
+    amb = []
+    gp = []
+    non_gp = []
 
-        for x in raw_data:
-            data.append(
-                dict(
-                    ind=x[0],
-                    sentence_type=x[1],
-                    sentence_ambiguous=x[2],
-                    sentence_gp=x[3],
-                    sentence_non_gp=x[4],
-                )
+    for x in raw_data:
+        data.append(
+            dict(
+                ind=x[0],
+                sentence_type=x[1],
+                sentence_ambiguous=x[2],
+                sentence_gp=x[3],
+                sentence_non_gp=x[4],
             )
-            amb.append(x[2])
-            gp.append(x[3])
-            non_gp.append(x[4])
+        )
+        amb.append(x[2])
+        gp.append(x[3])
+        non_gp.append(x[4])
 
-        input_amb = tokenizer(amb, padding=True, truncation=True, return_tensors="pt")
-        input_gp = tokenizer(gp, padding=True, truncation=True, return_tensors="pt")
-        input_non_gp = tokenizer(non_gp, padding=True, truncation=True, return_tensors="pt")
+    input_amb = tokenizer(amb, padding=True, truncation=True, return_tensors="pt")
+    input_gp = tokenizer(gp, padding=True, truncation=True, return_tensors="pt")
+    input_non_gp = tokenizer(non_gp, padding=True, truncation=True, return_tensors="pt")
 
-        print(len(data))
-        print(data[0])
+    print(len(data))
+    print(data[0])
 
-        diffs = []
-        for i in range(len(data)):
-            amb_tokens = input_amb['input_ids'][i].tolist()
-            gp_tokens = input_gp['input_ids'][i].tolist()
-            non_gp_tokens = input_non_gp['input_ids'][i].tolist()
+    diffs = []
+    for i in range(len(data)):
+        amb_tokens = input_amb['input_ids'][i].tolist()
+        gp_tokens = input_gp['input_ids'][i].tolist()
+        non_gp_tokens = input_non_gp['input_ids'][i].tolist()
 
-            for j in range(len(amb_tokens)):
-                if amb_tokens[j] != gp_tokens[j] != non_gp_tokens[j]:
-                    diff_index = -1
-                    data[i]["difference_index"] = diff_index
-                    diffs.append(diff_index)
-                    break
+        for j in range(len(amb_tokens)):
+            if amb_tokens[j] != gp_tokens[j] != non_gp_tokens[j]:
+                diff_index = -1
+                data[i]["difference_index"] = diff_index
+                diffs.append(diff_index)
+                break
 
-        print(Counter(diffs))
-        return data
+    print(Counter(diffs))
+    return data
 
 
 def prepare_clustering_data(dataset):
@@ -436,6 +441,7 @@ def parse_args():
     parser.add_argument('--model_type', type=str, default='gpt2_xl')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--n_clusters', type=int, default=3)
+    parser.add_argument('--dataset_name', type=str, default='gp_same_len.csv')
     return parser.parse_args()
 
 
@@ -462,16 +468,26 @@ def main():
     tokenizer = pipe.tokenizer
     tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = load_dataset(tokenizer)
-    train_dataset = dataset[:50]
-    test_dataset = dataset[50:]
-    print(train_dataset[0])
-
+    dataset = load_dataset(dataset_name, tokenizer)
+    
     # clfs, train_accuracies = fit_kmeans(train_dataset, tokenizer, model, device, args.seed, n_clusters=2)
     # test_accuracies = eval_kmeans(test_dataset, tokenizer, model, device, clfs, save_dir=save_dir)
 
     for sentence_type in ["NPS", "NPZ", "MVRR"]:
         save_dir = f"./umap_plots_{args.model_type}"
+        
+        # dataset splitting
+        if dataset_name == 'gp_same_len.csv':
+            k = 16
+        else:
+            if sentence_type == "MVRR":
+                k = 6
+            else: 
+                k = 8
+
+        ds_by_type = [x for x in dataset if x["sentence_type"] == sentence_type]
+        train_dataset = ds_by_type[:k]
+        test_dataset = ds_by_type[k:]
 
         amb_gp = run_binary_eval_exp("sentence_ambiguous", "sentence_gp", train_dataset, test_dataset, sentence_type,
                                      tokenizer, model, device,
